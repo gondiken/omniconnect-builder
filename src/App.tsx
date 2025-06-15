@@ -22,9 +22,8 @@ EVENT TYPES AND STRUCTURE:
     "command_id": "unique-string-id", 
     "data": {
         "customer_ids": {
-            "registered": "customer@email.com",
-            "email_id": "customer@email.com"
-            // At least one customer ID required
+            "registered": "customer@email.com"
+            // customer ID is required
         },
         "properties": {
             "first_name": "John",
@@ -139,7 +138,7 @@ function App() {
   const [generatedCode, setGeneratedCode] = useState('// Your Bloomreach Omniconnect handler function will appear here')
   const [preview, setPreview] = useState('')
   const [previewError, setPreviewError] = useState('')
-  const [activeTab, setActiveTab] = useState<'code' | 'preview'>('code')
+  // Remove this line: const [activeTab, setActiveTab] = useState<'code' | 'preview'>('code')
   const [apiKey, setApiKey] = useState('')
   
   const { notifications, showNotification, removeNotification } = useNotifications()
@@ -366,9 +365,10 @@ function parseDateToTimestampInSeconds(dateStr) {
           <OutputPanel
             generatedCode={generatedCode}
             preview={preview}
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
+            inputJson={inputJson}
+            inputType={inputType}
             onCopyCode={copyCode}
+            showNotification={showNotification}
           />
         </div>
       </main>

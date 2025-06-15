@@ -331,26 +331,175 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({ messages, loading, onSendM
 interface OutputPanelProps {
   generatedCode: string
   preview: string
-  activeTab: 'code' | 'preview'
-  setActiveTab: (tab: 'code' | 'preview') => void
+  inputJson: string
+  inputType: 'json' | 'csv'
   onCopyCode: () => void
+  showNotification: (message: string, type?: 'success' | 'error' | 'info') => void
 }
 
 export const OutputPanel: React.FC<OutputPanelProps> = ({
   generatedCode,
   preview,
-  activeTab,
-  setActiveTab,
-  onCopyCode
+  inputJson,
+  inputType,
+  onCopyCode,
+  showNotification
 }) => {
+  const [activeTab, setActiveTab] = useState<'code' | 'preview' | 'test'>('code')
+  const [endpoint, setEndpoint] = useState('https://api-demoapp.exponea.com/intg/webhook-handler/v1.0/ab30354f-7f8f-4074-9c58-058d29db3cfe/callback')
+  const [responses, setResponses] = useState<any[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+
   useEffect(() => {
     if (activeTab === 'code') {
       setTimeout(() => (window as any).Prism?.highlightAll(), 100)
     }
   }, [generatedCode, activeTab])
 
+  const sendRequest = async (data: any, index?: number) => {
+    try {
+      await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "Bloomreach-Test-Client/1.0"
+        },
+        body: JSON.stringify(data),
+        mode: 'no-cors'
+      })
+
+      return {
+        index,
+        status: 'sent',
+        statusText: 'Request sent successfully',
+        timestamp: new Date().toISOString(),
+        success: true
+      }
+    } catch (error) {
+      return {
+        index,
+        status: 0,
+        statusText: 'Network Error',
+        data: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: new Date().toISOString(),
+        success: false
+      }
+    }
+  }
+
+  const testTransformedData = async () => {
+    if (!generatedCode || generatedCode === '// Your Bloomreach Omniconnect handler function will appear here') {
+      showNotification('Please generate a handler function first', 'error')
+      return
+    }
+
+    setIsLoading(true)
+    try {
+      // Execute the generated code to transform the data
+      const utilityFunctions = `
+function currentTimestampInSeconds() {
+    return Math.round(Date.now() / 1000);
+}
+
+function parseDateToTimestampInSeconds(dateStr) {
+    const date = new Date(dateStr);
+    return Math.round(date.getTime() / 1000);
+}
+`
+      
+      const executionCode = `
+(function() {
+    const INTEGRATION_ID = "test-integration";
+    const COMPANY_ID = "test-company"; 
+    const INTEGRATION_NAME = "Test Integration";
+    
+    ${utilityFunctions}
+    ${generatedCode}
+    
+    return handler;
+})()`
+      
+      const handlerFunc = eval(executionCode)
+      let inputData
+      
+      if (inputType === 'csv') {
+        const parsed = Papa.parse(inputJson, { 
+          header: true,
+          dynamicTyping: true,
+          skipEmptyLines: true 
+        })
+        inputData = parsed.data.filter(row => Object.keys(row).some(key => row[key] !== null && row[key] !== ''))
+      } else {
+        inputData = JSON.parse(inputJson)
+      }
+      
+      const transformedEvents = handlerFunc(inputData)
+      
+      if (!Array.isArray(transformedEvents)) {
+        throw new Error('Handler must return an array of events')
+      }
+
+      // Send each event
+      const results = []
+      for (let i = 0; i < transformedEvents.length; i++) {
+        const result = await sendRequest(transformedEvents[i], i)
+        results.push(result)
+      }
+
+      setResponses(prev => [...results.reverse(), ...prev])
+      showNotification(`Sent ${transformedEvents.length} event${transformedEvents.length !== 1 ? 's' : ''} successfully!`)
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      showNotification('Error testing data: ' + errorMessage, 'error')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const testRawData = async () => {
+    setIsLoading(true)
+    try {
+      let inputData
+      
+      if (inputType === 'csv') {
+        const parsed = Papa.parse(inputJson, { 
+          header: true,
+          dynamicTyping: true,
+          skipEmptyLines: true 
+        })
+        inputData = parsed.data.filter(row => Object.keys(row).some(key => row[key] !== null && row[key] !== ''))
+        
+        // Send each row
+        const results = []
+        for (let i = 0; i < inputData.length; i++) {
+          const result = await sendRequest(inputData[i], i)
+          results.push(result)
+        }
+        setResponses(prev => [...results.reverse(), ...prev])
+        showNotification(`Sent ${inputData.length} row${inputData.length !== 1 ? 's' : ''} successfully!`)
+      } else {
+        inputData = JSON.parse(inputJson)
+        const result = await sendRequest(inputData)
+        setResponses(prev => [result, ...prev])
+        showNotification('Raw data sent successfully!')
+      }
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      showNotification('Error sending raw data: ' + errorMessage, 'error')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const clearResponses = () => {
+    setResponses([])
+  }
+
   return (
     <div className="bg-white rounded-lg shadow-sm border p-4 flex flex-col">
+      {/* Tab Headers */}
       <div className="flex gap-2 mb-4">
         <button
           onClick={() => setActiveTab('code')}
@@ -372,26 +521,146 @@ export const OutputPanel: React.FC<OutputPanelProps> = ({
         >
           Output Preview
         </button>
-        <div className="flex-1"></div>
         <button
-          onClick={onCopyCode}
-          className="text-sm bg-gray-100 text-gray-700 px-3 py-1 rounded hover:bg-gray-200 flex items-center gap-1"
+          onClick={() => setActiveTab('test')}
+          className={`px-4 py-2 text-sm font-medium rounded-lg ${
+            activeTab === 'test' 
+              ? 'bg-green-100 text-green-700' 
+              : 'text-gray-600 hover:bg-gray-100'
+          }`}
         >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-          </svg>
-          Copy Code
+          Test & Send
         </button>
+        <div className="flex-1"></div>
+        {activeTab === 'code' && (
+          <button
+            onClick={onCopyCode}
+            className="text-sm bg-gray-100 text-gray-700 px-3 py-1 rounded hover:bg-gray-200 flex items-center gap-1"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+            Copy Code
+          </button>
+        )}
       </div>
 
+      {/* Tab Content */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'code' ? (
+        {activeTab === 'code' && (
           <div className="h-full overflow-auto">
             <pre className="language-javascript h-full"><code>{generatedCode}</code></pre>
           </div>
-        ) : (
+        )}
+
+        {activeTab === 'preview' && (
           <div className="h-full overflow-auto">
             <pre className="bg-gray-50 p-4 rounded text-sm">{preview || '// Event output will appear here after generating the handler function'}</pre>
+          </div>
+        )}
+
+        {activeTab === 'test' && (
+          <div className="h-full flex flex-col space-y-4">
+            {/* Endpoint Configuration */}
+            <div className="border rounded-lg p-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Webhook Endpoint
+              </label>
+              <input
+                type="url"
+                value={endpoint}
+                onChange={(e) => setEndpoint(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-mono"
+                placeholder="https://api-demoapp.exponea.com/intg/webhook-handler/..."
+              />
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3">
+              <button
+                onClick={testTransformedData}
+                disabled={isLoading}
+                className="flex-1 bg-green-600 text-white px-4 py-3 rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-medium"
+              >
+                {isLoading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                    Sending...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    Send Transformed Data
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={testRawData}
+                disabled={isLoading}
+                className="bg-blue-600 text-white px-4 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                Send Raw Data
+              </button>
+            </div>
+
+            {/* Response History */}
+            <div className="flex-1 border rounded-lg">
+              <div className="flex items-center justify-between p-3 border-b bg-gray-50">
+                <h3 className="text-sm font-medium">Request History</h3>
+                <div className="flex items-center gap-2">
+                  {responses.length > 0 && (
+                    <span className="text-xs text-gray-500">
+                      {responses.length} request{responses.length !== 1 ? 's' : ''}
+                    </span>
+                  )}
+                  <button
+                    onClick={clearResponses}
+                    className="text-xs bg-white text-gray-700 px-2 py-1 rounded hover:bg-gray-100"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-3 max-h-64 overflow-y-auto">
+                {responses.length === 0 ? (
+                  <div className="text-center text-gray-500 py-8">
+                    <svg className="mx-auto h-8 w-8 text-gray-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2 2v-5m16 0h-2M4 13h2" />
+                    </svg>
+                    <p className="text-sm">No requests sent yet</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {responses.map((response, index) => (
+                      <div key={index} className={`text-xs p-2 rounded border ${
+                        response.success ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'
+                      }`}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <div className={`w-2 h-2 rounded-full ${
+                              response.success ? 'bg-green-500' : 'bg-red-500'
+                            }`}></div>
+                            <span className="font-medium">{response.statusText}</span>
+                            {response.index !== undefined && (
+                              <span className="bg-gray-200 text-gray-700 px-1 rounded">
+                                #{response.index + 1}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-gray-500">
+                            {new Date(response.timestamp).toLocaleTimeString()}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>
