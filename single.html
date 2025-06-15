@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bloomreach Omniconnect AI Transformer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <style>
+        .chat-message {
+            animation: fadeIn 0.3s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .tab-content {
+            height: calc(100vh - 200px);
+        }
+        pre { margin: 0 !important; }
+        code { font-size: 0.875rem !important; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // System prompt that teaches the AI about Omniconnect
+        const SYSTEM_PROMPT = `You are an expert at creating Bloomreach Omniconnect transformation functions. Omniconnect allows integrating data sources by transforming webhook payloads into Bloomreach events.
+
+IMPORTANT: Always return ONLY a JavaScript function named 'transform' that takes a 'payload' parameter and returns an event object or array of events.
+
+The returned event object MUST follow this structure:
+{
+    "event_type": "string", // Required: name of the event
+    "customer_id": "string", // Required: unique customer identifier
+    "timestamp": "string", // ISO 8601 format timestamp
+    "properties": {} // Event properties object
+}
+
+Key requirements:
+1. The function must be named 'transform' and take 'payload' as parameter
+2. Return a single event object or array of event objects
+3. Each event must have event_type, customer_id, timestamp, and properties
+4. Handle nested data with dot notation or destructuring
+5. Support transformations like date formatting, string manipulation, calculations
+6. Support conditional logic for different event types
+7. Support generating multiple events from arrays
+8. Always include proper error handling
+
+FOR CSV DATA:
+- The payload will be an array of objects, where each object represents a row
+- Each object has properties corresponding to the CSV column headers
+- Common patterns:
+  - Process all rows: payload.forEach(row => {...})
+  - Generate one event per row
+  - Aggregate data across rows
+  - Filter rows based on conditions
+
+Example CSV transformation:
+function transform(payload) {
+    // For CSV data, payload is an array of row objects
+    return payload.map(row => ({
+        event_type: "purchase",
+        customer_id: row.customer_email || row.user_id,
+        timestamp: new Date(row.date).toISOString(),
+        properties: {
+            order_id: row.order_id,
+            amount: parseFloat(row.amount),
+            product: row.product_name
+        }
+    }));
+}
+
+Example JSON transformation:
+function transform(payload) {
+    return {
+        event_type: "purchase",
+        customer_id: payload.user_id || payload.email,
+        timestamp: new Date(payload.created_at).toISOString(),
+        properties: {
+            order_id: payload.order_id,
+            total_amount: payload.amount,
+            currency: payload.currency,
+            items: payload.line_items.map(item => ({
+                name: item.product_name,
+                quantity: item.qty,
+                price: item.price
+            }))
+        }
+    };
+}
+
+When the user describes a transformation, analyze their requirements and generate the appropriate function. Support:
+- Field mapping (direct, nested, computed)
+- Transformations (uppercase, lowercase, date formatting, number parsing)
+- Aggregations (sum, average, count, min, max)
+- Conditional logic (if/else, ternary operators)
+- Loops for processing arrays or CSV rows
+- Multiple event generation from single payload or CSV rows`;
+
+        function App() {
+            const [inputJson, setInputJson] = useState('');
+            const [inputType, setInputType] = useState('json'); // 'json' or 'csv'
+            const [csvHeaders, setCsvHeaders] = useState([]);
+            const [messages, setMessages] = useState([]);
+            const [inputMessage, setInputMessage] = useState('');
+            const [generatedCode, setGeneratedCode] = useState('// Your transformation code will appear here');
+            const [preview, setPreview] = useState('');
+            const [activeTab, setActiveTab] = useState('code');
+            const [apiKey, setApiKey] = useState('');
+            const [loading, setLoading] = useState(false);
+            const fileInputRef = useRef(null);
+            const chatEndRef = useRef(null);
+
+            useEffect(() => {
+                // Check for API key in localStorage
+                const savedKey = localStorage.getItem('openai_api_key');
+                if (savedKey) setApiKey(savedKey);
+
+                // Set example JSON
+                const exampleJson = {
+                    "order_id": "ORD-12345",
+                    "user_id": "USER-789",
+                    "email": "customer@example.com",
+                    "status": "completed",
+                    "created_at": "2024-01-15T10:30:00Z",
+                    "amount": 199.99,
+                    "currency": "USD",
+                    "line_items": [
+                        {
+                            "product_id": "PROD-001",
+                            "product_name": "Widget Pro",
+                            "qty": 2,
+                            "price": 99.99
+                        }
+                    ]
+                };
+                setInputJson(JSON.stringify(exampleJson, null, 2));
+            }, []);
+
+            useEffect(() => {
+                chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+            }, [messages]);
+
+            const handleFileUpload = (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const content = e.target.result;
+                        
+                        if (file.name.endsWith('.csv')) {
+                            // Parse CSV
+                            Papa.parse(content, {
+                                header: true,
+                                complete: (results) => {
+                                    setInputType('csv');
+                                    setCsvHeaders(results.meta.fields || []);
+                                    // Store both raw CSV and sample JSON
+                                    setInputJson(content);
+                                    // Show a sample of parsed data in the chat
+                                    const sample = results.data.slice(0, 3);
+                                    console.log('CSV parsed, sample:', sample);
+                                },
+                                error: (error) => {
+                                    alert('Error parsing CSV: ' + error.message);
+                                }
+                            });
+                        } else {
+                            // Parse JSON
+                            try {
+                                const json = JSON.parse(content);
+                                setInputType('json');
+                                setInputJson(JSON.stringify(json, null, 2));
+                            } catch (err) {
+                                alert('Invalid JSON file');
+                            }
+                        }
+                    };
+                    reader.readAsText(file);
+                }
+            };
+
+            const handleDrop = (e) => {
+                e.preventDefault();
+                const file = e.dataTransfer.files[0];
+                if (file && (file.type === 'application/json' || file.name.endsWith('.csv'))) {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const content = event.target.result;
+                        
+                        if (file.name.endsWith('.csv')) {
+                            // Parse CSV
+                            Papa.parse(content, {
+                                header: true,
+                                complete: (results) => {
+                                    setInputType('csv');
+                                    setCsvHeaders(results.meta.fields || []);
+                                    setInputJson(content);
+                                },
+                                error: (error) => {
+                                    alert('Error parsing CSV: ' + error.message);
+                                }
+                            });
+                        } else {
+                            // Parse JSON
+                            try {
+                                const json = JSON.parse(content);
+                                setInputType('json');
+                                setInputJson(JSON.stringify(json, null, 2));
+                            } catch (err) {
+                                alert('Invalid JSON file');
+                            }
+                        }
+                    };
+                    reader.readAsText(file);
+                }
+            };
+
+            const handleDragOver = (e) => {
+                e.preventDefault();
+            };
+
+            const sendMessage = async () => {
+                if (!inputMessage.trim() || !apiKey) {
+                    if (!apiKey) alert('Please enter your OpenAI API key');
+                    return;
+                }
+
+                const userMessage = inputMessage;
+                setInputMessage('');
+                setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+                setLoading(true);
+
+                try {
+                    let contextMessage = '';
+                    if (inputType === 'csv') {
+                        contextMessage = `Here is a CSV file with columns: ${csvHeaders.join(', ')}\n\nThe payload will be an array where each element represents a row of the CSV.\n\nUser request: ${userMessage}`;
+                    } else {
+                        contextMessage = `Here is the input JSON payload:\n${inputJson}\n\nUser request: ${userMessage}`;
+                    }
+
+                    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${apiKey}`
+                        },
+                        body: JSON.stringify({
+                            model: 'gpt-4o',
+                            messages: [
+                                { role: 'system', content: SYSTEM_PROMPT },
+                                { role: 'user', content: contextMessage }
+                            ],
+                            temperature: 0.3
+                        })
+                    });
+
+                    const data = await response.json();
+                    
+                    if (data.error) {
+                        throw new Error(data.error.message);
+                    }
+
+                    const assistantResponse = data.choices[0].message.content;
+                    setMessages(prev => [...prev, { role: 'assistant', content: assistantResponse }]);
+
+                    // Extract the code from the response
+                    const codeMatch = assistantResponse.match(/function transform[\s\S]*?^}/m);
+                    if (codeMatch) {
+                        setGeneratedCode(codeMatch[0]);
+                        Prism.highlightAll();
+                        
+                        // Generate preview
+                        try {
+                            const transformFunc = new Function('return ' + codeMatch[0])();
+                            let inputData;
+                            
+                            if (inputType === 'csv') {
+                                // Parse CSV for preview
+                                const parsed = Papa.parse(inputJson, { header: true });
+                                inputData = parsed.data;
+                            } else {
+                                inputData = JSON.parse(inputJson);
+                            }
+                            
+                            const output = transformFunc(inputData);
+                            setPreview(JSON.stringify(output, null, 2));
+                        } catch (err) {
+                            setPreview(`// Error: ${err.message}`);
+                        }
+                    }
+                } catch (error) {
+                    setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${error.message}` }]);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleKeyPress = (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            };
+
+            const copyCode = () => {
+                navigator.clipboard.writeText(generatedCode).then(() => {
+                    alert('Code copied to clipboard!');
+                });
+            };
+
+            const saveApiKey = () => {
+                localStorage.setItem('openai_api_key', apiKey);
+                alert('API key saved!');
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-50 flex flex-col">
+                    {/* Header */}
+                    <header className="bg-white shadow-sm border-b">
+                        <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
+                            <div className="flex items-center justify-between">
+                                <h1 className="text-2xl font-bold text-gray-900">Bloomreach Omniconnect AI Transformer</h1>
+                                <div className="flex items-center gap-2">
+                                    <input
+                                        type="password"
+                                        placeholder="OpenAI API Key"
+                                        value={apiKey}
+                                        onChange={(e) => setApiKey(e.target.value)}
+                                        className="px-3 py-1 border rounded-md text-sm w-64"
+                                    />
+                                    <button
+                                        onClick={saveApiKey}
+                                        className="text-sm bg-gray-100 text-gray-700 px-3 py-1 rounded-md hover:bg-gray-200"
+                                    >
+                                        Save
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Main Content */}
+                    <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 sm:px-6 lg:px-8">
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
+                            {/* Input Panel */}
+                            <div className="bg-white rounded-lg shadow-sm border p-4">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h2 className="text-lg font-semibold">Sample Input Data</h2>
+                                    {inputType === 'csv' && (
+                                        <span className="text-sm bg-green-100 text-green-700 px-2 py-1 rounded">
+                                            CSV
+                                        </span>
+                                    )}
+                                </div>
+                                <div
+                                    onDrop={handleDrop}
+                                    onDragOver={handleDragOver}
+                                    className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center mb-4 hover:border-gray-400 transition-colors"
+                                >
+                                    <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                                    </svg>
+                                    <p className="mt-2 text-sm text-gray-600">Drag & drop JSON or CSV file</p>
+                                    <input
+                                        ref={fileInputRef}
+                                        type="file"
+                                        accept=".json,.csv"
+                                        onChange={handleFileUpload}
+                                        className="hidden"
+                                    />
+                                    <button
+                                        onClick={() => fileInputRef.current.click()}
+                                        className="mt-2 text-sm text-blue-600 hover:text-blue-700"
+                                    >
+                                        Choose file
+                                    </button>
+                                </div>
+                                {inputType === 'csv' && csvHeaders.length > 0 && (
+                                    <div className="mb-3 p-3 bg-gray-50 rounded">
+                                        <p className="text-sm font-medium text-gray-700 mb-1">CSV Columns:</p>
+                                        <div className="flex flex-wrap gap-1">
+                                            {csvHeaders.map((header, idx) => (
+                                                <span key={idx} className="text-xs bg-white px-2 py-1 rounded border">
+                                                    {header}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                                <textarea
+                                    value={inputJson}
+                                    onChange={(e) => setInputJson(e.target.value)}
+                                    className="w-full h-80 p-3 border rounded-lg font-mono text-sm resize-none"
+                                    placeholder={inputType === 'csv' ? "CSV content..." : "Or paste raw JSON here..."}
+                                />
+                            </div>
+
+                            {/* Chat Panel */}
+                            <div className="bg-white rounded-lg shadow-sm border p-4 flex flex-col">
+                                <h2 className="text-lg font-semibold mb-4">Tell me how you want to transform this payload...</h2>
+                                
+                                {/* Initial helper message */}
+                                {messages.length === 0 && (
+                                    <div className="flex-1 flex items-center justify-center">
+                                        <div className="text-center text-gray-500 text-sm max-w-xs">
+                                            <p className="mb-4">Describe your transformation in plain English. For example:</p>
+                                            <div className="space-y-2 text-left bg-gray-50 p-3 rounded">
+                                                <p className="text-xs">• "Create a purchase event with order total and items"</p>
+                                                <p className="text-xs">• "When status is completed, emit PurchaseCompleted..."</p>
+                                                <p className="text-xs">• "Generate one event per line item with product details"</p>
+                                                <p className="text-xs text-green-600">• "For each CSV row, create an event with customer email"</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Chat messages */}
+                                <div className="flex-1 overflow-y-auto mb-4 space-y-4">
+                                    {messages.map((msg, idx) => (
+                                        <div key={idx} className={`chat-message ${msg.role === 'user' ? 'text-right' : ''}`}>
+                                            <div className={`inline-block p-3 rounded-lg max-w-[80%] ${
+                                                msg.role === 'user' 
+                                                    ? 'bg-blue-600 text-white' 
+                                                    : 'bg-gray-100 text-gray-800'
+                                            }`}>
+                                                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {loading && (
+                                        <div className="chat-message">
+                                            <div className="inline-block p-3 rounded-lg bg-gray-100">
+                                                <div className="flex space-x-2">
+                                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                    <div ref={chatEndRef} />
+                                </div>
+
+                                {/* Input area */}
+                                <div className="border-t pt-4">
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            value={inputMessage}
+                                            onChange={(e) => setInputMessage(e.target.value)}
+                                            onKeyPress={handleKeyPress}
+                                            placeholder="Describe your mapping or refinement..."
+                                            className="flex-1 px-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            disabled={loading}
+                                        />
+                                        <button
+                                            onClick={sendMessage}
+                                            disabled={loading}
+                                            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                                        >
+                                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                                            </svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Output Panel */}
+                            <div className="bg-white rounded-lg shadow-sm border p-4 flex flex-col">
+                                <div className="flex gap-2 mb-4">
+                                    <button
+                                        onClick={() => setActiveTab('code')}
+                                        className={`px-4 py-2 text-sm font-medium rounded-lg ${
+                                            activeTab === 'code' 
+                                                ? 'bg-blue-100 text-blue-700' 
+                                                : 'text-gray-600 hover:bg-gray-100'
+                                        }`}
+                                    >
+                                        JS Code
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveTab('preview')}
+                                        className={`px-4 py-2 text-sm font-medium rounded-lg ${
+                                            activeTab === 'preview' 
+                                                ? 'bg-blue-100 text-blue-700' 
+                                                : 'text-gray-600 hover:bg-gray-100'
+                                        }`}
+                                    >
+                                        Preview
+                                    </button>
+                                    <div className="flex-1"></div>
+                                    <button
+                                        onClick={copyCode}
+                                        className="text-sm bg-gray-100 text-gray-700 px-3 py-1 rounded hover:bg-gray-200"
+                                    >
+                                        Copy Code
+                                    </button>
+                                </div>
+
+                                <div className="flex-1 overflow-hidden">
+                                    {activeTab === 'code' ? (
+                                        <div className="h-full overflow-auto">
+                                            <pre className="language-javascript h-full"><code>{generatedCode}</code></pre>
+                                        </div>
+                                    ) : (
+                                        <div className="h-full overflow-auto">
+                                            <pre className="bg-gray-50 p-4 rounded text-sm">{preview || '// Output will appear here after generating code'}</pre>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
