@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bloomreach Omniconnect Data Pusher</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <style>
+        .pulse-dot {
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .fade-in {
+            animation: fadeIn 0.3s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        function App() {
+            const [endpoint, setEndpoint] = useState('https://api-demoapp.exponea.com/intg/webhook-handler/v1.0/ab30354f-7f8f-4074-9c58-058d29db3cfe/callback');
+            const [method, setMethod] = useState('POST');
+            const [headers, setHeaders] = useState('{\n  "Content-Type": "application/json",\n  "User-Agent": "Bloomreach-Test-Client/1.0"\n}');
+            const [payload, setPayload] = useState('');
+            const [responses, setResponses] = useState([]);
+            const [isLoading, setIsLoading] = useState(false);
+            const [csvData, setCsvData] = useState([]);
+            const [inputType, setInputType] = useState('json');
+            const [batchSize, setBatchSize] = useState(1);
+            const [delay, setDelay] = useState(1000);
+            const [corsMode, setCorsMode] = useState('cors');
+            const fileInputRef = useRef(null);
+
+            useEffect(() => {
+                // Set example payload
+                const examplePayload = {
+                    "event_id": "EVT-" + Date.now(),
+                    "timestamp": new Date().toISOString(),
+                    "customer_data": {
+                        "email": "test.user@example.com",
+                        "first_name": "Test",
+                        "last_name": "User",
+                        "phone": "+1234567890"
+                    },
+                    "event_data": {
+                        "event_type": "form_submission",
+                        "form_name": "Newsletter Signup",
+                        "source": "website",
+                        "utm_source": "google",
+                        "utm_campaign": "summer_promo"
+                    }
+                };
+                setPayload(JSON.stringify(examplePayload, null, 2));
+            }, []);
+
+            const handleFileUpload = (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const content = e.target.result;
+                        
+                        if (file.name.endsWith('.csv')) {
+                            Papa.parse(content, {
+                                header: true,
+                                dynamicTyping: true,
+                                skipEmptyLines: true,
+                                complete: (results) => {
+                                    setCsvData(results.data);
+                                    setInputType('csv');
+                                    setPayload(`// CSV loaded with ${results.data.length} rows\n// Columns: ${results.meta.fields.join(', ')}\n\n// Sample row:\n${JSON.stringify(results.data[0] || {}, null, 2)}`);
+                                },
+                                error: (error) => {
+                                    alert('Error parsing CSV: ' + error.message);
+                                }
+                            });
+                        } else {
+                            try {
+                                const json = JSON.parse(content);
+                                setInputType('json');
+                                setPayload(JSON.stringify(json, null, 2));
+                            } catch (err) {
+                                setPayload(content);
+                            }
+                        }
+                    };
+                    reader.readAsText(file);
+                }
+            };
+
+            const validateConfiguration = () => {
+                try {
+                    // Validate URL
+                    new URL(endpoint);
+                    
+                    // Validate headers JSON
+                    if (headers.trim()) {
+                        JSON.parse(headers);
+                    }
+                    
+                    // Validate payload if JSON
+                    if (inputType === 'json' && payload.trim()) {
+                        // Skip validation if it's a comment (CSV preview)
+                        if (!payload.trim().startsWith('//')) {
+                            JSON.parse(payload);
+                        }
+                    }
+                    
+                    return { valid: true };
+                } catch (error) {
+                    return { valid: false, error: error.message };
+                }
+            };
+
+            const sendRequest = async (data, index = null) => {
+                try {
+                    let parsedHeaders = {};
+                    if (headers.trim()) {
+                        try {
+                            parsedHeaders = JSON.parse(headers);
+                        } catch (e) {
+                            throw new Error('Invalid JSON in headers field: ' + e.message);
+                        }
+                    }
+                    
+                    const fetchOptions = {
+                        method: method,
+                        headers: parsedHeaders,
+                        body: JSON.stringify(data)
+                    };
+
+                    // Add CORS mode if needed
+                    if (corsMode === 'no-cors') {
+                        fetchOptions.mode = 'no-cors';
+                    }
+
+                    const response = await fetch(endpoint, fetchOptions);
+
+                    // Handle no-cors mode
+                    if (corsMode === 'no-cors') {
+                        return {
+                            index,
+                            status: 'opaque',
+                            statusText: 'Request sent (no-cors mode)',
+                            data: 'Response details not available in no-cors mode, but request was sent successfully.',
+                            timestamp: new Date().toISOString(),
+                            success: true
+                        };
+                    }
+
+                    const responseText = await response.text();
+                    let responseData;
+                    
+                    try {
+                        responseData = JSON.parse(responseText);
+                    } catch {
+                        responseData = responseText;
+                    }
+
+                    return {
+                        index,
+                        status: response.status,
+                        statusText: response.statusText,
+                        data: responseData,
+                        timestamp: new Date().toISOString(),
+                        success: response.ok
+                    };
+                } catch (error) {
+                    // Check if it's a CORS error
+                    const isCorsError = error.message.includes('Failed to fetch') || 
+                                       error.message.includes('CORS') ||
+                                       error.message.includes('Access-Control-Allow-Origin');
+                    
+                    return {
+                        index,
+                        status: 0,
+                        statusText: isCorsError ? 'CORS Error' : 'Network Error',
+                        data: isCorsError ? 
+                            'CORS policy blocked this request. Try enabling "No-CORS Mode" below or use a browser extension to disable CORS, or run this from a server.' : 
+                            error.message,
+                        timestamp: new Date().toISOString(),
+                        success: false,
+                        isCorsError
+                    };
+                }
+            };
+
+            const testConnection = async () => {
+                const validation = validateConfiguration();
+                if (!validation.valid) {
+                    alert('Configuration Error: ' + validation.error);
+                    return;
+                }
+
+                setIsLoading(true);
+                try {
+                    const testData = { test: true, timestamp: new Date().toISOString() };
+                    const result = await sendRequest(testData);
+                    setResponses(prev => [{ ...result, index: 'TEST' }, ...prev]);
+                    
+                    if (result.success) {
+                        alert('✅ Connection test successful!');
+                    } else if (result.isCorsError) {
+                        alert('❌ CORS Error: Try enabling "No-CORS Mode" or use a CORS browser extension');
+                    } else {
+                        alert(`❌ Connection test failed with status ${result.status}`);
+                    }
+                } catch (error) {
+                    alert('❌ Connection test failed: ' + error.message);
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            const sendSingleRequest = async () => {
+                const validation = validateConfiguration();
+                if (!validation.valid) {
+                    alert('Configuration Error: ' + validation.error);
+                    return;
+                }
+
+                if (!payload.trim() || payload.trim().startsWith('//')) {
+                    alert('Please enter a valid JSON payload');
+                    return;
+                }
+
+                setIsLoading(true);
+                try {
+                    let data;
+                    if (inputType === 'csv') {
+                        data = csvData[0] || {};
+                    } else {
+                        data = JSON.parse(payload);
+                    }
+
+                    const result = await sendRequest(data);
+                    setResponses(prev => [result, ...prev]);
+                } catch (error) {
+                    alert('Request Error: ' + error.message);
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            const sendBatchRequests = async () => {
+                if (inputType !== 'csv' || csvData.length === 0) {
+                    alert('Please upload a CSV file for batch sending');
+                    return;
+                }
+
+                setIsLoading(true);
+                const results = [];
+                
+                try {
+                    for (let i = 0; i < csvData.length; i += batchSize) {
+                        const batch = csvData.slice(i, i + batchSize);
+                        
+                        // Send batch in parallel
+                        const batchPromises = batch.map((row, batchIndex) => 
+                            sendRequest(row, i + batchIndex)
+                        );
+                        
+                        const batchResults = await Promise.all(batchPromises);
+                        results.push(...batchResults);
+                        
+                        // Update UI with batch results
+                        setResponses(prev => [...batchResults.reverse(), ...prev]);
+                        
+                        // Delay between batches (except for last batch)
+                        if (i + batchSize < csvData.length && delay > 0) {
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                        }
+                    }
+                } catch (error) {
+                    alert('Batch sending error: ' + error.message);
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            const clearResponses = () => {
+                setResponses([]);
+            };
+
+            const copyResponse = (response) => {
+                const copyText = `Status: ${response.status} ${response.statusText}\nTimestamp: ${response.timestamp}\n\nResponse:\n${JSON.stringify(response.data, null, 2)}`;
+                navigator.clipboard.writeText(copyText).then(() => {
+                    alert('Response copied to clipboard!');
+                });
+            };
+
+            const generateTestData = () => {
+                const testEvents = [
+                    {
+                        event_type: "registration",
+                        customer_data: {
+                            email: `user${Date.now()}@example.com`,
+                            first_name: "John",
+                            last_name: "Doe",
+                            phone: "+1234567890"
+                        },
+                        registration_data: {
+                            source: "website",
+                            utm_campaign: "summer_signup"
+                        }
+                    },
+                    {
+                        event_type: "purchase",
+                        customer_data: {
+                            email: "customer@example.com",
+                            customer_id: "CUST_12345"
+                        },
+                        purchase_data: {
+                            order_id: "ORD_" + Date.now(),
+                            total_amount: 299.99,
+                            currency: "USD",
+                            items: [
+                                { name: "Widget Pro", price: 199.99, quantity: 1 },
+                                { name: "Widget Addon", price: 100.00, quantity: 1 }
+                            ]
+                        }
+                    },
+                    {
+                        event_type: "form_submission",
+                        customer_data: {
+                            email: "lead@example.com"
+                        },
+                        form_data: {
+                            form_name: "Contact Us",
+                            message: "Interested in your services",
+                            phone: "+1987654321"
+                        }
+                    }
+                ];
+
+                const randomEvent = testEvents[Math.floor(Math.random() * testEvents.length)];
+                randomEvent.timestamp = new Date().toISOString();
+                randomEvent.event_id = "EVT_" + Date.now();
+                
+                setPayload(JSON.stringify(randomEvent, null, 2));
+                setInputType('json');
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-50">
+                    {/* Header */}
+                    <header className="bg-white shadow-sm border-b">
+                        <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h1 className="text-2xl font-bold text-gray-900">Bloomreach Omniconnect Data Pusher</h1>
+                                    <p className="text-sm text-gray-600 mt-1">Test your webhook handlers by sending data to Bloomreach</p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={generateTestData}
+                                        className="text-sm bg-green-100 text-green-700 px-3 py-2 rounded-md hover:bg-green-200 flex items-center gap-1"
+                                    >
+                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                        </svg>
+                                        Generate Test Data
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </header>
+
+                    <main className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            {/* Request Configuration Panel */}
+                            <div className="space-y-6">
+                                {/* Endpoint Configuration */}
+                                <div className="bg-white rounded-lg shadow-sm border p-6">
+                                    <h2 className="text-lg font-semibold mb-4">Request Configuration</h2>
+                                    
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                Webhook Endpoint URL
+                                            </label>
+                                            <input
+                                                type="url"
+                                                value={endpoint}
+                                                onChange={(e) => setEndpoint(e.target.value)}
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                                                placeholder="https://api-demoapp.exponea.com/intg/webhook-handler/..."
+                                            />
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                    HTTP Method
+                                                </label>
+                                                <select
+                                                    value={method}
+                                                    onChange={(e) => setMethod(e.target.value)}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                >
+                                                    <option value="POST">POST</option>
+                                                    <option value="PUT">PUT</option>
+                                                    <option value="PATCH">PATCH</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                    Input Type
+                                                </label>
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`px-2 py-1 text-xs rounded ${inputType === 'json' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
+                                                        {inputType === 'csv' ? `CSV (${csvData.length} rows)` : 'JSON'}
+                                                    </span>
+                                                    <input
+                                                        ref={fileInputRef}
+                                                        type="file"
+                                                        accept=".json,.csv"
+                                                        onChange={handleFileUpload}
+                                                        className="hidden"
+                                                    />
+                                                    <button
+                                                        onClick={() => fileInputRef.current.click()}
+                                                        className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded hover:bg-gray-200"
+                                                    >
+                                                        Upload File
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                Headers (JSON)
+                                            </label>
+                                            <textarea
+                                                value={headers}
+                                                onChange={(e) => setHeaders(e.target.value)}
+                                                rows="4"
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                                                placeholder='{"Content-Type": "application/json"}'
+                                            />
+                                        </div>
+
+                                        {/* CORS Mode Selection */}
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                CORS Mode
+                                            </label>
+                                            <div className="flex items-center gap-4">
+                                                <label className="flex items-center">
+                                                    <input
+                                                        type="radio"
+                                                        value="cors"
+                                                        checked={corsMode === 'cors'}
+                                                        onChange={(e) => setCorsMode(e.target.value)}
+                                                        className="mr-2"
+                                                    />
+                                                    <span className="text-sm">Standard CORS</span>
+                                                </label>
+                                                <label className="flex items-center">
+                                                    <input
+                                                        type="radio"
+                                                        value="no-cors"
+                                                        checked={corsMode === 'no-cors'}
+                                                        onChange={(e) => setCorsMode(e.target.value)}
+                                                        className="mr-2"
+                                                    />
+                                                    <span className="text-sm">No-CORS Mode</span>
+                                                </label>
+                                            </div>
+                                            <p className="text-xs text-gray-500 mt-1">
+                                                Use No-CORS mode if you're getting CORS errors. Note: response details won't be visible.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Payload Configuration */}
+                                <div className="bg-white rounded-lg shadow-sm border p-6">
+                                    <h2 className="text-lg font-semibold mb-4">Request Payload</h2>
+                                    
+                                    <textarea
+                                        value={payload}
+                                        onChange={(e) => setPayload(e.target.value)}
+                                        rows="12"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                                        placeholder={inputType === 'csv' ? 'Upload a CSV file to see data here...' : 'Enter JSON payload...'}
+                                    />
+                                </div>
+
+                                {/* Batch Settings (shown only for CSV) */}
+                                {inputType === 'csv' && csvData.length > 0 && (
+                                    <div className="bg-white rounded-lg shadow-sm border p-6">
+                                        <h2 className="text-lg font-semibold mb-4">Batch Settings</h2>
+                                        
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                    Batch Size
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    min="1"
+                                                    max="100"
+                                                    value={batchSize}
+                                                    onChange={(e) => setBatchSize(parseInt(e.target.value) || 1)}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                />
+                                                <p className="text-xs text-gray-500 mt-1">Requests per batch</p>
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                    Delay (ms)
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    value={delay}
+                                                    onChange={(e) => setDelay(parseInt(e.target.value) || 0)}
+                                                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                />
+                                                <p className="text-xs text-gray-500 mt-1">Between batches</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Send Buttons */}
+                                <div className="bg-white rounded-lg shadow-sm border p-6">
+                                    <div className="flex gap-3 mb-3">
+                                        <button
+                                            onClick={testConnection}
+                                            disabled={isLoading}
+                                            className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                            </svg>
+                                            Test Connection
+                                        </button>
+                                    </div>
+                                    <div className="flex gap-3">
+                                        <button
+                                            onClick={sendSingleRequest}
+                                            disabled={isLoading}
+                                            className="flex-1 bg-blue-600 text-white px-4 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-medium"
+                                        >
+                                            {isLoading ? (
+                                                <>
+                                                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                                    Sending...
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                                                    </svg>
+                                                    Send Single Request
+                                                </>
+                                            )}
+                                        </button>
+
+                                        {inputType === 'csv' && csvData.length > 1 && (
+                                            <button
+                                                onClick={sendBatchRequests}
+                                                disabled={isLoading}
+                                                className="flex-1 bg-green-600 text-white px-4 py-3 rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-medium"
+                                            >
+                                                {isLoading ? (
+                                                    <>
+                                                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                                        Sending Batch...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                                        </svg>
+                                                        Send All Rows ({csvData.length})
+                                                    </>
+                                                )}
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Response Panel */}
+                            <div className="bg-white rounded-lg shadow-sm border p-6">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h2 className="text-lg font-semibold">Responses</h2>
+                                    <div className="flex items-center gap-2">
+                                        {responses.length > 0 && (
+                                            <span className="text-sm text-gray-500">
+                                                {responses.length} response{responses.length !== 1 ? 's' : ''}
+                                            </span>
+                                        )}
+                                        <button
+                                            onClick={clearResponses}
+                                            className="text-sm bg-gray-100 text-gray-700 px-3 py-1 rounded hover:bg-gray-200"
+                                        >
+                                            Clear
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4 max-h-96 overflow-y-auto">
+                                    {responses.length === 0 ? (
+                                        <div className="text-center text-gray-500 py-8">
+                                            <svg className="mx-auto h-12 w-12 text-gray-400 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2 2v-5m16 0h-2M4 13h2m6-1v1m0 0v1m0-1h1m-1 0h-1" />
+                                            </svg>
+                                            <p>No responses yet</p>
+                                            <p className="text-sm">Send a request to see the response here</p>
+                                        </div>
+                                    ) : (
+                                        responses.map((response, index) => (
+                                            <div key={index} className={`border rounded-lg p-4 fade-in ${
+                                                response.success ? 'border-green-200 bg-green-50' : 
+                                                response.isCorsError ? 'border-yellow-200 bg-yellow-50' :
+                                                'border-red-200 bg-red-50'
+                                            }`}>
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className={`w-3 h-3 rounded-full ${
+                                                            response.success ? 'bg-green-500' : 
+                                                            response.isCorsError ? 'bg-yellow-500' :
+                                                            'bg-red-500'
+                                                        }`}></div>
+                                                        <span className="font-medium text-sm">
+                                                            {response.status} {response.statusText}
+                                                        </span>
+                                                        {response.index !== null && response.index !== 'TEST' && (
+                                                            <span className="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded">
+                                                                Row {response.index + 1}
+                                                            </span>
+                                                        )}
+                                                        {response.index === 'TEST' && (
+                                                            <span className="text-xs bg-blue-200 text-blue-700 px-2 py-1 rounded">
+                                                                TEST
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-xs text-gray-500">
+                                                            {new Date(response.timestamp).toLocaleTimeString()}
+                                                        </span>
+                                                        <button
+                                                            onClick={() => copyResponse(response)}
+                                                            className="text-xs bg-white bg-opacity-70 text-gray-600 px-2 py-1 rounded hover:bg-opacity-100"
+                                                        >
+                                                            Copy
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <pre className="text-xs bg-white bg-opacity-70 p-3 rounded overflow-x-auto">
+                                                    {typeof response.data === 'string' 
+                                                        ? response.data 
+                                                        : JSON.stringify(response.data, null, 2)
+                                                    }
+                                                </pre>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* CORS Help Section */}
+                        <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                            <h3 className="text-sm font-medium text-blue-800 mb-2">📋 CORS Troubleshooting</h3>
+                            <div className="text-xs text-blue-700 space-y-1">
+                                <p><strong>Getting CORS errors?</strong> This is normal when making requests from a browser to external APIs.</p>
+                                <p><strong>Solutions:</strong></p>
+                                <ul className="list-disc list-inside ml-2 space-y-1">
+                                    <li>Enable "No-CORS Mode" above (requests will be sent but responses won't be visible)</li>
+                                    <li>Use a browser extension like "CORS Unblock" or "CORS Everywhere"</li>
+                                    <li>Run with <code className="bg-blue-100 px-1 rounded">--disable-web-security</code> flag in Chrome</li>
+                                    <li>Deploy this app to the same domain as your Bloomreach endpoint</li>
+                                    <li>Use a proxy server or backend to make the requests</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </main>
+
+                    {/* Footer */}
+                    <footer className="bg-white border-t mt-8">
+                        <div className="max-w-7xl mx-auto px-4 py-3 sm:px-6 lg:px-8">
+                            <p className="text-xs text-gray-500 text-center">
+                                Send test data to your Bloomreach Omniconnect webhook handlers. Supports both single requests and batch CSV uploads.
+                            </p>
+                        </div>
+                    </footer>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
