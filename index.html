@@ -30,6 +30,32 @@
             min-height: 80px;
             max-height: 200px;
         }
+        .notification {
+            animation: slideInRight 0.3s ease-out;
+        }
+        @keyframes slideInRight {
+            from { 
+                opacity: 0; 
+                transform: translateX(100%) translateY(-50%);
+            }
+            to { 
+                opacity: 1; 
+                transform: translateX(0) translateY(-50%);
+            }
+        }
+        .notification-exit {
+            animation: slideOutRight 0.3s ease-in forwards;
+        }
+        @keyframes slideOutRight {
+            from { 
+                opacity: 1; 
+                transform: translateX(0) translateY(-50%);
+            }
+            to { 
+                opacity: 0; 
+                transform: translateX(100%) translateY(-50%);
+            }
+        }
     </style>
 </head>
 <body>
@@ -166,6 +192,53 @@ When users describe transformations, generate the complete handler function with
 - Multiple events if needed (updates + behavioral events)
 - All required utility functions included`;
 
+        // Toast Notification Component
+        function ToastNotification({ message, type = 'success', onClose }) {
+            const [isExiting, setIsExiting] = useState(false);
+
+            useEffect(() => {
+                const timer = setTimeout(() => {
+                    setIsExiting(true);
+                    setTimeout(onClose, 300); // Match animation duration
+                }, 2000);
+
+                return () => clearTimeout(timer);
+            }, [onClose]);
+
+            const bgColor = type === 'success' ? 'bg-green-500' : type === 'error' ? 'bg-red-500' : 'bg-blue-500';
+            const icon = type === 'success' ? (
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+            ) : type === 'error' ? (
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            ) : (
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+            );
+
+            return (
+                <div className={`fixed top-4 right-4 z-50 ${bgColor} text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 min-w-64 notification ${isExiting ? 'notification-exit' : ''}`}>
+                    {icon}
+                    <span className="text-sm font-medium">{message}</span>
+                    <button
+                        onClick={() => {
+                            setIsExiting(true);
+                            setTimeout(onClose, 300);
+                        }}
+                        className="ml-auto text-white hover:text-gray-200 transition-colors"
+                    >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+            );
+        }
+
         function App() {
             const [inputJson, setInputJson] = useState('');
             const [inputType, setInputType] = useState('json'); // 'json' or 'csv'
@@ -178,6 +251,7 @@ When users describe transformations, generate the complete handler function with
             const [activeTab, setActiveTab] = useState('code');
             const [apiKey, setApiKey] = useState('');
             const [loading, setLoading] = useState(false);
+            const [notifications, setNotifications] = useState([]);
             const fileInputRef = useRef(null);
             const chatEndRef = useRef(null);
             const textareaRef = useRef(null);
@@ -220,6 +294,17 @@ When users describe transformations, generate the complete handler function with
                 }
             }, [inputMessage]);
 
+            // Notification system
+            const showNotification = (message, type = 'success') => {
+                const id = Date.now();
+                const notification = { id, message, type };
+                setNotifications(prev => [...prev, notification]);
+            };
+
+            const removeNotification = (id) => {
+                setNotifications(prev => prev.filter(notif => notif.id !== id));
+            };
+
             const handleFileUpload = (event) => {
                 const file = event.target.files[0];
                 if (file) {
@@ -236,12 +321,13 @@ When users describe transformations, generate the complete handler function with
                                     setCsvHeaders(results.meta.fields || []);
                                     // Store both raw CSV and sample JSON
                                     setInputJson(content);
+                                    showNotification(`CSV file loaded with ${results.data.length} rows`);
                                     // Show a sample of parsed data in the chat
                                     const sample = results.data.slice(0, 3);
                                     console.log('CSV parsed, sample:', sample);
                                 },
                                 error: (error) => {
-                                    alert('Error parsing CSV: ' + error.message);
+                                    showNotification('Error parsing CSV: ' + error.message, 'error');
                                 }
                             });
                         } else {
@@ -250,8 +336,9 @@ When users describe transformations, generate the complete handler function with
                                 const json = JSON.parse(content);
                                 setInputType('json');
                                 setInputJson(JSON.stringify(json, null, 2));
+                                showNotification('JSON file loaded successfully');
                             } catch (err) {
-                                alert('Invalid JSON file');
+                                showNotification('Invalid JSON file', 'error');
                             }
                         }
                     };
@@ -275,9 +362,10 @@ When users describe transformations, generate the complete handler function with
                                     setInputType('csv');
                                     setCsvHeaders(results.meta.fields || []);
                                     setInputJson(content);
+                                    showNotification(`CSV file loaded with ${results.data.length} rows`);
                                 },
                                 error: (error) => {
-                                    alert('Error parsing CSV: ' + error.message);
+                                    showNotification('Error parsing CSV: ' + error.message, 'error');
                                 }
                             });
                         } else {
@@ -286,8 +374,9 @@ When users describe transformations, generate the complete handler function with
                                 const json = JSON.parse(content);
                                 setInputType('json');
                                 setInputJson(JSON.stringify(json, null, 2));
+                                showNotification('JSON file loaded successfully');
                             } catch (err) {
-                                alert('Invalid JSON file');
+                                showNotification('Invalid JSON file', 'error');
                             }
                         }
                     };
@@ -301,7 +390,7 @@ When users describe transformations, generate the complete handler function with
 
             const sendMessage = async () => {
                 if (!inputMessage.trim() || !apiKey) {
-                    if (!apiKey) alert('Please enter your OpenAI API key');
+                    if (!apiKey) showNotification('Please enter your OpenAI API key', 'error');
                     return;
                 }
 
@@ -361,6 +450,7 @@ When users describe transformations, generate the complete handler function with
                     if (fullCode) {
                         setGeneratedCode(fullCode);
                         setTimeout(() => Prism.highlightAll(), 100);
+                        showNotification('Handler function generated successfully!');
                         
                         // Generate preview with better error handling
                         try {
@@ -444,9 +534,11 @@ function parseDateToTimestampInSeconds(dateStr) {
                         }
                     } else {
                         setPreview('// No code found in response. Please try again or refine your request.');
+                        showNotification('No handler function found in response', 'error');
                     }
                 } catch (error) {
                     setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${error.message}` }]);
+                    showNotification('Error: ' + error.message, 'error');
                 } finally {
                     setLoading(false);
                 }
@@ -461,7 +553,7 @@ function parseDateToTimestampInSeconds(dateStr) {
 
             const testPreview = () => {
                 if (!generatedCode || generatedCode === '// Your Bloomreach Omniconnect handler function will appear here') {
-                    alert('No generated code to test. Please generate a handler function first.');
+                    showNotification('No generated code to test. Please generate a handler function first.', 'error');
                     return;
                 }
                 
@@ -522,27 +614,49 @@ function parseDateToTimestampInSeconds(dateStr) {
                     setPreview(JSON.stringify(output, null, 2));
                     setPreviewError('');
                     setActiveTab('preview');
+                    showNotification('Code tested successfully!');
                     
                 } catch (err) {
                     setPreviewError(err.message);
                     setPreview(`// Test Error: ${err.message}\n// \n// This usually means:\n// 1. Syntax error in generated code\n// 2. Missing handler function\n// 3. Input data format issue\n//\n// Check the Handler Function tab for issues.`);
                     setActiveTab('preview');
+                    showNotification('Test failed: ' + err.message, 'error');
                 }
             };
 
-            const copyCode = () => {
-                navigator.clipboard.writeText(generatedCode).then(() => {
-                    alert('Code copied to clipboard!');
-                });
+            const copyCode = async () => {
+                try {
+                    await navigator.clipboard.writeText(generatedCode);
+                    showNotification('Code copied to clipboard!');
+                } catch (err) {
+                    // Fallback for older browsers
+                    const textArea = document.createElement('textarea');
+                    textArea.value = generatedCode;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+                    showNotification('Code copied to clipboard!');
+                }
             };
 
             const saveApiKey = () => {
                 localStorage.setItem('openai_api_key', apiKey);
-                alert('API key saved!');
+                showNotification('API key saved!');
             };
 
             return (
                 <div className="min-h-screen bg-gray-50 flex flex-col">
+                    {/* Notifications */}
+                    {notifications.map(notification => (
+                        <ToastNotification
+                            key={notification.id}
+                            message={notification.message}
+                            type={notification.type}
+                            onClose={() => removeNotification(notification.id)}
+                        />
+                    ))}
+
                     {/* Header */}
                     <header className="bg-white shadow-sm border-b">
                         <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
