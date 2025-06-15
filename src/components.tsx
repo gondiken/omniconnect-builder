@@ -387,77 +387,26 @@ export const OutputPanel: React.FC<OutputPanelProps> = ({
     }
   }
 
-  const testTransformedData = async () => {
-    if (!generatedCode || generatedCode === '// Your Bloomreach Omniconnect handler function will appear here') {
-      showNotification('Please generate a handler function first', 'error')
-      return
-    }
-
+  const testConnection = async () => {
     setIsLoading(true)
     try {
-      // Execute the generated code to transform the data
-      const utilityFunctions = `
-function currentTimestampInSeconds() {
-    return Math.round(Date.now() / 1000);
-}
-
-function parseDateToTimestampInSeconds(dateStr) {
-    const date = new Date(dateStr);
-    return Math.round(date.getTime() / 1000);
-}
-`
+      const testData = { test: true, timestamp: new Date().toISOString() }
+      const result = await sendRequest(testData)
+      setResponses(prev => [{ ...result, index: 'TEST' }, ...prev])
       
-      const executionCode = `
-(function() {
-    const INTEGRATION_ID = "test-integration";
-    const COMPANY_ID = "test-company"; 
-    const INTEGRATION_NAME = "Test Integration";
-    
-    ${utilityFunctions}
-    ${generatedCode}
-    
-    return handler;
-})()`
-      
-      const handlerFunc = eval(executionCode)
-      let inputData
-      
-      if (inputType === 'csv') {
-        const parsed = Papa.parse(inputJson, { 
-          header: true,
-          dynamicTyping: true,
-          skipEmptyLines: true 
-        })
-        inputData = parsed.data.filter(row => Object.keys(row).some(key => row[key] !== null && row[key] !== ''))
+      if (result.success) {
+        showNotification('✅ Test connection successful!')
       } else {
-        inputData = JSON.parse(inputJson)
+        showNotification(`❌ Test connection failed: ${result.data}`, 'error')
       }
-      
-      const transformedEvents = handlerFunc(inputData)
-      
-      if (!Array.isArray(transformedEvents)) {
-        throw new Error('Handler must return an array of events')
-      }
-
-      // Send each event
-      const results = []
-      for (let i = 0; i < transformedEvents.length; i++) {
-        const result = await sendRequest(transformedEvents[i], i)
-        results.push(result)
-      }
-
-      setResponses(prev => [...results.reverse(), ...prev])
-      showNotification(`Sent ${transformedEvents.length} event${transformedEvents.length !== 1 ? 's' : ''} successfully!`)
-
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      showNotification('Error testing data: ' + errorMessage, 'error')
+      showNotification('❌ Test connection failed: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error')
     } finally {
       setIsLoading(false)
     }
   }
 
-  const testRawData = async () => {
+  const sendData = async () => {
     setIsLoading(true)
     try {
       let inputData
@@ -482,12 +431,12 @@ function parseDateToTimestampInSeconds(dateStr) {
         inputData = JSON.parse(inputJson)
         const result = await sendRequest(inputData)
         setResponses(prev => [result, ...prev])
-        showNotification('Raw data sent successfully!')
+        showNotification('Data sent successfully!')
       }
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      showNotification('Error sending raw data: ' + errorMessage, 'error')
+      showNotification('Error sending data: ' + errorMessage, 'error')
     } finally {
       setIsLoading(false)
     }
@@ -581,9 +530,20 @@ return (
             {/* Action Buttons */}
             <div className="flex gap-3">
               <button
-                onClick={testTransformedData}
+                onClick={testConnection}
                 disabled={isLoading}
-                className="flex-1 bg-green-600 text-white px-4 py-3 rounded-lg hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-medium"
+                className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Test Connection
+              </button>
+
+              <button
+                onClick={sendData}
+                disabled={isLoading}
+                className="flex-1 bg-blue-600 text-white px-4 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-medium"
               >
                 {isLoading ? (
                   <>
@@ -593,19 +553,11 @@ return (
                 ) : (
                   <>
                     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                     </svg>
-                    Send Transformed Data
+                    Send Data
                   </>
                 )}
-              </button>
-
-              <button
-                onClick={testRawData}
-                disabled={isLoading}
-                className="bg-blue-600 text-white px-4 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                Send Raw Data
               </button>
             </div>
 
@@ -648,9 +600,14 @@ return (
                               response.success ? 'bg-green-500' : 'bg-red-500'
                             }`}></div>
                             <span className="font-medium">{response.statusText}</span>
-                            {response.index !== undefined && (
-                              <span className="bg-gray-200 text-gray-700 px-1 rounded">
-                                #{response.index + 1}
+                            {response.index === 'TEST' && (
+                              <span className="bg-blue-200 text-blue-700 px-1 rounded text-xs">
+                                TEST
+                              </span>
+                            )}
+                            {response.index !== undefined && response.index !== 'TEST' && (
+                              <span className="bg-gray-200 text-gray-700 px-1 rounded text-xs">
+                                Row {response.index + 1}
                               </span>
                             )}
                           </div>
