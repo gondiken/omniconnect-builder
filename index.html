@@ -38,79 +38,133 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        // System prompt that teaches the AI about Omniconnect
-        const SYSTEM_PROMPT = `You are an expert at creating Bloomreach Omniconnect transformation functions. Omniconnect allows integrating data sources by transforming webhook payloads into Bloomreach events.
+        // Updated system prompt based on actual Bloomreach Omniconnect specification
+        const SYSTEM_PROMPT = `You are an expert at creating Bloomreach Omniconnect transformation functions. You help users transform webhook payloads into Bloomreach Engagement events.
 
-IMPORTANT: Always return ONLY a JavaScript function named 'transform' that takes a 'payload' parameter and returns an event object or array of events.
+CRITICAL REQUIREMENTS:
+1. Always return ONLY a JavaScript function named 'handler' that takes a 'payload' parameter
+2. The function must return an array of event objects (even if just one event)
+3. Use const and let instead of var for variables
+4. No 3rd party libraries or console.log() allowed
+5. Must include utility functions if needed (like timestamp helpers)
 
-The returned event object MUST follow this structure:
+EVENT TYPES AND STRUCTURE:
+
+**CUSTOMER UPDATE EVENT:**
 {
-    "event_type": "string", // Required: name of the event
-    "customer_id": "string", // Required: unique customer identifier
-    "timestamp": "string", // ISO 8601 format timestamp
-    "properties": {} // Event properties object
+    "name": "customers",
+    "command_id": "unique-string-id", 
+    "data": {
+        "customer_ids": {
+            "registered": "customer@email.com",
+            "email_id": "customer@email.com"
+            // At least one customer ID required
+        },
+        "properties": {
+            "first_name": "John",
+            "last_name": "Doe"
+            // Customer properties to update
+        },
+        "update_timestamp": 1614941503 // Unix timestamp in seconds (REQUIRED)
+    }
 }
 
-Key requirements:
-1. The function must be named 'transform' and take 'payload' as parameter
-2. Return a single event object or array of event objects
-3. Each event must have event_type, customer_id, timestamp, and properties
-4. Handle nested data with dot notation or destructuring
-5. Support transformations like date formatting, string manipulation, calculations
-6. Support conditional logic for different event types
-7. Support generating multiple events from arrays
-8. Always include proper error handling
-
-FOR CSV DATA:
-- The payload will be an array of objects, where each object represents a row
-- Each object has properties corresponding to the CSV column headers
-- Common patterns:
-  - Process all rows: payload.forEach(row => {...})
-  - Generate one event per row
-  - Aggregate data across rows
-  - Filter rows based on conditions
-
-Example CSV transformation:
-function transform(payload) {
-    // For CSV data, payload is an array of row objects
-    return payload.map(row => ({
-        event_type: "purchase",
-        customer_id: row.customer_email || row.user_id,
-        timestamp: new Date(row.date).toISOString(),
-        properties: {
-            order_id: row.order_id,
-            amount: parseFloat(row.amount),
-            product: row.product_name
+**CUSTOMER EVENT:**
+{
+    "name": "customers/events",
+    "command_id": "unique-string-id",
+    "data": {
+        "customer_ids": {
+            "registered": "customer@email.com",
+            "email_id": "customer@email.com"
+            // At least one customer ID required
+        },
+        "event_type": "purchase", // REQUIRED: event name
+        "timestamp": 1614941503, // Unix timestamp in seconds (REQUIRED)
+        "properties": {
+            "total_price": 1234.50,
+            "product_name": "Widget"
+            // Event-specific properties
         }
-    }));
+    }
 }
 
-Example JSON transformation:
-function transform(payload) {
-    return {
-        event_type: "purchase",
-        customer_id: payload.user_id || payload.email,
-        timestamp: new Date(payload.created_at).toISOString(),
-        properties: {
-            order_id: payload.order_id,
-            total_amount: payload.amount,
-            currency: payload.currency,
-            items: payload.line_items.map(item => ({
-                name: item.product_name,
-                quantity: item.qty,
-                price: item.price
-            }))
+PREDEFINED CONSTANTS (available in Bloomreach):
+- INTEGRATION_ID: Current integration identifier
+- COMPANY_ID: Project ID in Engagement Platform  
+- INTEGRATION_NAME: Name of the webhook handler
+
+REQUIRED UTILITY FUNCTIONS TO INCLUDE:
+\`\`\`javascript
+function currentTimestampInSeconds() {
+    return Math.round(Date.now() / 1000);
+}
+
+function parseDateToTimestampInSeconds(dateStr) {
+    const date = new Date(dateStr);
+    return Math.round(date.getTime() / 1000);
+}
+\`\`\`
+
+EXAMPLE STRUCTURE:
+\`\`\`javascript
+function handler(payload) {
+    const event_list = [];
+    
+    // Extract customer IDs (at least one required)
+    const customerIDs = {
+        "registered": payload.email || payload.customer_email,
+        "email_id": payload.email || payload.customer_email
+    };
+    
+    // Customer Update Event (optional)
+    const customerUpdate = {
+        name: "customers",
+        command_id: String(payload.id + "-update"),
+        data: {
+            customer_ids: customerIDs,
+            properties: {
+                first_name: payload.first_name,
+                last_name: payload.last_name
+            },
+            update_timestamp: currentTimestampInSeconds()
         }
     };
+    event_list.push(customerUpdate);
+    
+    // Customer Event (for tracking behavior)
+    const customerEvent = {
+        name: "customers/events", 
+        command_id: String(payload.id + "-event"),
+        data: {
+            customer_ids: customerIDs,
+            event_type: payload.event_type || "custom_event",
+            timestamp: currentTimestampInSeconds(),
+            properties: {
+                // Map relevant payload fields to event properties
+            }
+        }
+    };
+    event_list.push(customerEvent);
+    
+    return event_list;
 }
+\`\`\`
 
-When the user describes a transformation, analyze their requirements and generate the appropriate function. Support:
-- Field mapping (direct, nested, computed)
-- Transformations (uppercase, lowercase, date formatting, number parsing)
-- Aggregations (sum, average, count, min, max)
-- Conditional logic (if/else, ternary operators)
-- Loops for processing arrays or CSV rows
-- Multiple event generation from single payload or CSV rows`;
+FOR CSV DATA:
+- payload will be an array of row objects
+- Process each row with payload.forEach() or payload.map()
+- Generate events for each row or aggregate across rows
+- Always ensure customer_ids are properly extracted from each row
+
+When users describe transformations, generate the complete handler function with:
+- Proper customer ID extraction
+- Appropriate event types based on the data
+- Correct timestamp handling
+- Field mappings as requested
+- Conditional logic for different scenarios
+- Multiple events if needed (updates + behavioral events)
+- All required utility functions included`;
 
         function App() {
             const [inputJson, setInputJson] = useState('');
@@ -118,8 +172,9 @@ When the user describes a transformation, analyze their requirements and generat
             const [csvHeaders, setCsvHeaders] = useState([]);
             const [messages, setMessages] = useState([]);
             const [inputMessage, setInputMessage] = useState('');
-            const [generatedCode, setGeneratedCode] = useState('// Your transformation code will appear here');
+            const [generatedCode, setGeneratedCode] = useState('// Your Bloomreach Omniconnect handler function will appear here');
             const [preview, setPreview] = useState('');
+            const [previewError, setPreviewError] = useState('');
             const [activeTab, setActiveTab] = useState('code');
             const [apiKey, setApiKey] = useState('');
             const [loading, setLoading] = useState(false);
@@ -132,23 +187,23 @@ When the user describes a transformation, analyze their requirements and generat
                 const savedKey = localStorage.getItem('openai_api_key');
                 if (savedKey) setApiKey(savedKey);
 
-                // Set example JSON
+                // Set example JSON that matches common webhook payload patterns
                 const exampleJson = {
-                    "order_id": "ORD-12345",
-                    "user_id": "USER-789",
-                    "email": "customer@example.com",
-                    "status": "completed",
-                    "created_at": "2024-01-15T10:30:00Z",
-                    "amount": 199.99,
-                    "currency": "USD",
-                    "line_items": [
-                        {
-                            "product_id": "PROD-001",
-                            "product_name": "Widget Pro",
-                            "qty": 2,
-                            "price": 99.99
-                        }
-                    ]
+                    "event_id": "EVT-12345",
+                    "customer_data": {
+                        "email": "john.doe@example.com",
+                        "first_name": "John",
+                        "last_name": "Doe",
+                        "created_at": "2024-01-15T10:30:00Z",
+                        "event_type": "registration"
+                    },
+                    "customer_event_data": {
+                        "event_type": "form_submission",
+                        "title": "Newsletter Signup",
+                        "form_id": "FORM-001",
+                        "submitted_at": "2024-01-15T10:30:00Z",
+                        "tags": ["newsletter", "marketing"]
+                    }
                 };
                 setInputJson(JSON.stringify(exampleJson, null, 2));
             }, []);
@@ -288,30 +343,107 @@ When the user describes a transformation, analyze their requirements and generat
                     const assistantResponse = data.choices[0].message.content;
                     setMessages(prev => [...prev, { role: 'assistant', content: assistantResponse }]);
 
-                    // Extract the code from the response
-                    const codeMatch = assistantResponse.match(/function transform[\s\S]*?^}/m);
-                    if (codeMatch) {
-                        setGeneratedCode(codeMatch[0]);
-                        Prism.highlightAll();
+                    // Extract the code from the response with better parsing
+                    let fullCode = '';
+                    
+                    // First try to extract everything between ```javascript and ``` or ```
+                    const codeBlockMatch = assistantResponse.match(/```(?:javascript)?\s*([\s\S]*?)```/);
+                    if (codeBlockMatch) {
+                        fullCode = codeBlockMatch[1].trim();
+                    } else {
+                        // Fallback: extract individual functions
+                        const functionMatches = assistantResponse.match(/function\s+\w+\s*\([^)]*\)\s*{[\s\S]*?^}/gm);
+                        if (functionMatches) {
+                            fullCode = functionMatches.join('\n\n');
+                        }
+                    }
+                    
+                    if (fullCode) {
+                        setGeneratedCode(fullCode);
+                        setTimeout(() => Prism.highlightAll(), 100);
                         
-                        // Generate preview
+                        // Generate preview with better error handling
                         try {
-                            const transformFunc = new Function('return ' + codeMatch[0])();
+                            // Clean up the code and ensure all functions are properly defined
+                            let cleanCode = fullCode;
+                            
+                            // Ensure utility functions are present if handler exists but they don't
+                            if (cleanCode.includes('function handler') && !cleanCode.includes('function currentTimestampInSeconds')) {
+                                const utilityFunctions = `
+function currentTimestampInSeconds() {
+    return Math.round(Date.now() / 1000);
+}
+
+function parseDateToTimestampInSeconds(dateStr) {
+    const date = new Date(dateStr);
+    return Math.round(date.getTime() / 1000);
+}
+`;
+                                cleanCode = utilityFunctions + '\n\n' + cleanCode;
+                            }
+                            
+                            // Create execution environment
+                            const executionCode = `
+(function() {
+    // Bloomreach constants
+    const INTEGRATION_ID = "test-integration";
+    const COMPANY_ID = "test-company"; 
+    const INTEGRATION_NAME = "Test Integration";
+    
+    ${cleanCode}
+    
+    // Ensure handler function exists
+    if (typeof handler !== 'function') {
+        throw new Error('No handler function found in generated code');
+    }
+    
+    return handler;
+})()`;
+                            
+                            const handlerFunc = eval(executionCode);
                             let inputData;
                             
                             if (inputType === 'csv') {
                                 // Parse CSV for preview
-                                const parsed = Papa.parse(inputJson, { header: true });
-                                inputData = parsed.data;
+                                const parsed = Papa.parse(inputJson, { 
+                                    header: true,
+                                    dynamicTyping: true,
+                                    skipEmptyLines: true 
+                                });
+                                inputData = parsed.data.filter(row => Object.keys(row).some(key => row[key] !== null && row[key] !== ''));
                             } else {
                                 inputData = JSON.parse(inputJson);
                             }
                             
-                            const output = transformFunc(inputData);
+                            const output = handlerFunc(inputData);
+                            
+                            // Validate output structure
+                            if (!Array.isArray(output)) {
+                                throw new Error('Handler must return an array of events');
+                            }
+                            
+                            // Check if events have required fields
+                            output.forEach((event, index) => {
+                                if (!event.name || !event.data) {
+                                    throw new Error(`Event ${index} missing required 'name' or 'data' field`);
+                                }
+                                if (event.name === 'customers' && !event.data.update_timestamp) {
+                                    console.warn(`Customer update event ${index} missing update_timestamp`);
+                                }
+                                if (event.name === 'customers/events' && (!event.data.event_type || !event.data.timestamp)) {
+                                    console.warn(`Customer event ${index} missing event_type or timestamp`);
+                                }
+                            });
+                            
                             setPreview(JSON.stringify(output, null, 2));
+                            setPreviewError('');
                         } catch (err) {
-                            setPreview(`// Error: ${err.message}`);
+                            console.error('Preview generation error:', err);
+                            setPreviewError(err.message);
+                            setPreview(`// Preview Error: ${err.message}\n// \n// Debug Info:\n// - Input type: ${inputType}\n// - Functions found: ${cleanCode.includes('function handler') ? 'handler' : 'missing'}\n// - Code length: ${cleanCode.length} chars\n//\n// Please check:\n// 1. All functions are properly closed with }\n// 2. handler function exists and returns an array\n// 3. No syntax errors in the generated code\n//\n// Raw extracted code:\n/*\n${cleanCode.substring(0, 500)}${cleanCode.length > 500 ? '...' : ''}\n*/`);
                         }
+                    } else {
+                        setPreview('// No code found in response. Please try again or refine your request.');
                     }
                 } catch (error) {
                     setMessages(prev => [...prev, { role: 'assistant', content: `Error: ${error.message}` }]);
@@ -324,6 +456,77 @@ When the user describes a transformation, analyze their requirements and generat
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     sendMessage();
+                }
+            };
+
+            const testPreview = () => {
+                if (!generatedCode || generatedCode === '// Your Bloomreach Omniconnect handler function will appear here') {
+                    alert('No generated code to test. Please generate a handler function first.');
+                    return;
+                }
+                
+                try {
+                    // Test the current generated code
+                    let cleanCode = generatedCode;
+                    
+                    // Ensure utility functions are present
+                    if (cleanCode.includes('function handler') && !cleanCode.includes('function currentTimestampInSeconds')) {
+                        const utilityFunctions = `
+function currentTimestampInSeconds() {
+    return Math.round(Date.now() / 1000);
+}
+
+function parseDateToTimestampInSeconds(dateStr) {
+    const date = new Date(dateStr);
+    return Math.round(date.getTime() / 1000);
+}
+`;
+                        cleanCode = utilityFunctions + '\n\n' + cleanCode;
+                    }
+                    
+                    const executionCode = `
+(function() {
+    const INTEGRATION_ID = "test-integration";
+    const COMPANY_ID = "test-company"; 
+    const INTEGRATION_NAME = "Test Integration";
+    
+    ${cleanCode}
+    
+    if (typeof handler !== 'function') {
+        throw new Error('No handler function found in generated code');
+    }
+    
+    return handler;
+})()`;
+                    
+                    const handlerFunc = eval(executionCode);
+                    let inputData;
+                    
+                    if (inputType === 'csv') {
+                        const parsed = Papa.parse(inputJson, { 
+                            header: true,
+                            dynamicTyping: true,
+                            skipEmptyLines: true 
+                        });
+                        inputData = parsed.data.filter(row => Object.keys(row).some(key => row[key] !== null && row[key] !== ''));
+                    } else {
+                        inputData = JSON.parse(inputJson);
+                    }
+                    
+                    const output = handlerFunc(inputData);
+                    
+                    if (!Array.isArray(output)) {
+                        throw new Error('Handler must return an array of events');
+                    }
+                    
+                    setPreview(JSON.stringify(output, null, 2));
+                    setPreviewError('');
+                    setActiveTab('preview');
+                    
+                } catch (err) {
+                    setPreviewError(err.message);
+                    setPreview(`// Test Error: ${err.message}\n// \n// This usually means:\n// 1. Syntax error in generated code\n// 2. Missing handler function\n// 3. Input data format issue\n//\n// Check the Handler Function tab for issues.`);
+                    setActiveTab('preview');
                 }
             };
 
@@ -344,7 +547,10 @@ When the user describes a transformation, analyze their requirements and generat
                     <header className="bg-white shadow-sm border-b">
                         <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
                             <div className="flex items-center justify-between">
-                                <h1 className="text-2xl font-bold text-gray-900">Bloomreach Omniconnect AI Transformer</h1>
+                                <div>
+                                    <h1 className="text-2xl font-bold text-gray-900">Bloomreach Omniconnect AI Transformer</h1>
+                                    <p className="text-sm text-gray-600 mt-1">Generate webhook transformation functions for Bloomreach Engagement</p>
+                                </div>
                                 <div className="flex items-center gap-2">
                                     <input
                                         type="password"
@@ -370,7 +576,7 @@ When the user describes a transformation, analyze their requirements and generat
                             {/* Input Panel */}
                             <div className="bg-white rounded-lg shadow-sm border p-4">
                                 <div className="flex items-center justify-between mb-4">
-                                    <h2 className="text-lg font-semibold">Sample Input Data</h2>
+                                    <h2 className="text-lg font-semibold">Webhook Payload Sample</h2>
                                     {inputType === 'csv' && (
                                         <span className="text-sm bg-green-100 text-green-700 px-2 py-1 rounded">
                                             CSV
@@ -416,24 +622,24 @@ When the user describes a transformation, analyze their requirements and generat
                                     value={inputJson}
                                     onChange={(e) => setInputJson(e.target.value)}
                                     className="w-full h-80 p-3 border rounded-lg font-mono text-sm resize-none"
-                                    placeholder={inputType === 'csv' ? "CSV content..." : "Or paste raw JSON here..."}
+                                    placeholder={inputType === 'csv' ? "CSV content..." : "Or paste webhook JSON payload here..."}
                                 />
                             </div>
 
                             {/* Chat Panel */}
                             <div className="bg-white rounded-lg shadow-sm border p-4 flex flex-col">
-                                <h2 className="text-lg font-semibold mb-4">Tell me how you want to transform this payload...</h2>
+                                <h2 className="text-lg font-semibold mb-4">Describe Your Transformation</h2>
                                 
                                 {/* Initial helper message */}
                                 {messages.length === 0 && (
                                     <div className="flex-1 flex items-center justify-center">
                                         <div className="text-center text-gray-500 text-sm max-w-xs">
-                                            <p className="mb-4">Describe your transformation in plain English. For example:</p>
+                                            <p className="mb-4">Tell me how to transform this payload into Bloomreach events:</p>
                                             <div className="space-y-2 text-left bg-gray-50 p-3 rounded">
-                                                <p className="text-xs">• "Create a purchase event with order total and items"</p>
-                                                <p className="text-xs">• "When status is completed, emit PurchaseCompleted..."</p>
-                                                <p className="text-xs">• "Generate one event per line item with product details"</p>
-                                                <p className="text-xs text-green-600">• "For each CSV row, create an event with customer email"</p>
+                                                <p className="text-xs">• "Create customer update and purchase event"</p>
+                                                <p className="text-xs">• "Map email to customer ID, create form submission event"</p>
+                                                <p className="text-xs">• "For each CSV row, update customer and track signup"</p>
+                                                <p className="text-xs">• "Extract order items into separate events"</p>
                                             </div>
                                         </div>
                                     </div>
@@ -474,7 +680,7 @@ When the user describes a transformation, analyze their requirements and generat
                                             value={inputMessage}
                                             onChange={(e) => setInputMessage(e.target.value)}
                                             onKeyPress={handleKeyPress}
-                                            placeholder="Describe your mapping or refinement in detail... (Shift+Enter for new line, Enter to send)"
+                                            placeholder="Describe your mapping requirements... (Shift+Enter for new line, Enter to send)"
                                             className="w-full px-4 py-3 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 chat-input"
                                             disabled={loading}
                                             rows="3"
@@ -491,7 +697,7 @@ When the user describes a transformation, analyze their requirements and generat
                                                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
                                                 </svg>
-                                                Send
+                                                Generate
                                             </button>
                                         </div>
                                     </div>
@@ -509,7 +715,7 @@ When the user describes a transformation, analyze their requirements and generat
                                                 : 'text-gray-600 hover:bg-gray-100'
                                         }`}
                                     >
-                                        JS Code
+                                        Handler Function
                                     </button>
                                     <button
                                         onClick={() => setActiveTab('preview')}
@@ -519,13 +725,16 @@ When the user describes a transformation, analyze their requirements and generat
                                                 : 'text-gray-600 hover:bg-gray-100'
                                         }`}
                                     >
-                                        Preview
+                                        Output Preview
                                     </button>
                                     <div className="flex-1"></div>
                                     <button
                                         onClick={copyCode}
-                                        className="text-sm bg-gray-100 text-gray-700 px-3 py-1 rounded hover:bg-gray-200"
+                                        className="text-sm bg-gray-100 text-gray-700 px-3 py-1 rounded hover:bg-gray-200 flex items-center gap-1"
                                     >
+                                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                        </svg>
                                         Copy Code
                                     </button>
                                 </div>
@@ -537,13 +746,22 @@ When the user describes a transformation, analyze their requirements and generat
                                         </div>
                                     ) : (
                                         <div className="h-full overflow-auto">
-                                            <pre className="bg-gray-50 p-4 rounded text-sm">{preview || '// Output will appear here after generating code'}</pre>
+                                            <pre className="bg-gray-50 p-4 rounded text-sm">{preview || '// Event output will appear here after generating the handler function'}</pre>
                                         </div>
                                     )}
                                 </div>
                             </div>
                         </div>
                     </main>
+
+                    {/* Footer */}
+                    <footer className="bg-white border-t">
+                        <div className="max-w-7xl mx-auto px-4 py-3 sm:px-6 lg:px-8">
+                            <p className="text-xs text-gray-500 text-center">
+                                Generated code follows Bloomreach Omniconnect specifications. Copy and paste into your Bloomreach webhook handler.
+                            </p>
+                        </div>
+                    </footer>
                 </div>
             );
         }
