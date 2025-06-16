@@ -77,8 +77,7 @@ function handler(payload) {
     
     // Extract customer IDs (at least one required)
     const customerIDs = {
-        "registered": payload.email || payload.customer_email,
-        "email_id": payload.email || payload.customer_email
+        "registered": payload.email || payload.customer_email
     };
     
     // Customer Update Event (optional)
