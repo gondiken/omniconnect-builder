@@ -321,7 +321,7 @@ function parseDateToTimestampInSeconds(dateStr) {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-2xl font-bold text-gray-900">Bloomreach Omniconnect AI Transformer</h1>
-              <p className="text-sm text-gray-600 mt-1">Generate webhook transformation functions for Bloomreach Engagement</p>
+              <p className="text-sm text-gray-600 mt-1">Generate transformation functions for Bloomreach Engagement</p>
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -376,7 +376,7 @@ function parseDateToTimestampInSeconds(dateStr) {
       <footer className="bg-white border-t">
         <div className="max-w-7xl mx-auto px-4 py-3 sm:px-6 lg:px-8">
           <p className="text-xs text-gray-500 text-center">
-            Generated code follows Bloomreach Omniconnect specifications. Copy and paste into your Bloomreach webhook handler.
+            Generated code follows Bloomreach Omniconnect specifications. Copy and paste into your Bloomreach data handler.
           </p>
         </div>
       </footer>

@@ -163,7 +163,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
   return (
     <div className="bg-white rounded-lg shadow-sm border p-4">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold">Webhook Payload Sample</h2>
+        <h2 className="text-lg font-semibold">Payload Sample</h2>
         {inputType === 'csv' && (
           <span className="text-sm bg-green-100 text-green-700 px-2 py-1 rounded">
             CSV
@@ -209,7 +209,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
         value={inputJson}
         onChange={(e) => setInputJson(e.target.value)}
         className="w-full h-80 p-3 border rounded-lg font-mono text-sm resize-none"
-        placeholder={inputType === 'csv' ? "CSV content..." : "Or paste webhook JSON payload here..."}
+        placeholder={inputType === 'csv' ? "CSV content..." : "Or paste data JSON payload here..."}
       />
     </div>
   )
@@ -516,7 +516,7 @@ return (
             {/* Endpoint Configuration */}
             <div className="border rounded-lg p-4">
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Webhook Endpoint
+                Endpoint
               </label>
               <input
                 type="url"
