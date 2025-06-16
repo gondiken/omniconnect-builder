@@ -40,8 +40,7 @@ EVENT TYPES AND STRUCTURE:
     "command_id": "unique-string-id",
     "data": {
         "customer_ids": {
-            "registered": "customer@email.com",
-            "email_id": "customer@email.com"
+            "registered": "customer@email.com"
             // At least one customer ID required
         },
         "event_type": "purchase", // REQUIRED: event name
